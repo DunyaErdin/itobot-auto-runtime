@@ -1,0 +1,7 @@
+AutoRunner	KEYWORD1
+AutoCommand	KEYWORD1
+AutoRuntimeIO	KEYWORD1
+AutoRuntimeInput	KEYWORD1
+AutoRuntimeConfig	KEYWORD1
+AutoTelemetry	KEYWORD1
+Cmd	KEYWORD1
