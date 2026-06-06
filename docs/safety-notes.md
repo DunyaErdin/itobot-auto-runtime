@@ -27,6 +27,8 @@ Use timeout disable only when your firmware has an independent safety path.
 
 `updateVisionPickup` is optional, but if used it should be fast and non-blocking. The runtime calls it once per `autoRunner.update()` tick while `Cmd::VisionPickup` is active, so long delays inside the callback will delay timeout checks and command sequencing.
 
+`setLift` is required only when a routine contains `LiftOn` or `LiftOff`. Those commands finish immediately after calling the callback. If `setLift` is configured, the runtime also calls `setLift(0.0f)` on final stop, cancel, error, and timeout so the lift is not left running.
+
 ## Power Limits
 
 Movement power and turn output are clamped to `[-1, 1]`. Heading corrections are also clamped by `maxHeadingCorrection`.

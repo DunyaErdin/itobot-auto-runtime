@@ -35,9 +35,9 @@ Arduino IDE'de örnekleri açmak için:
 - Auto Studio generated `AutoCommand[]` dizilerini sırayla çalıştırır.
 - `DriveHoldYaw` ve `StrafeHoldYaw` komutlarında gyro yaw hold düzeltmesi üretir.
 - `TurnToYaw` komutunu delay ile değil, gyro feedback ile hedef açıya gelene kadar çalıştırır.
-- `Wait`, `IntakeOn`, `IntakeOff`, `Drop`, `Stop` komutlarını callback üzerinden yürütür.
+- `Wait`, `IntakeOn`, `IntakeOff`, `LiftOn`, `LiftOff`, `Drop`, `Stop` komutlarını callback üzerinden yürütür.
 - `VisionPickup` komutunu async olarak başlatır, her loop'ta vision update callback'ini çağırır ve vision bittiğinde sonraki komuta geçer.
-- Komut timeout, error, cancel ve finish durumlarında drive motorlarını güvenli şekilde durdurmaya çalışır.
+- Komut timeout, error, cancel ve finish durumlarında drive motorlarını ve `setLift` bağlıysa lift mekanizmasını güvenli şekilde durdurmaya çalışır.
 
 ## Ne Yapmaz?
 
@@ -113,6 +113,10 @@ void runtimeSetIntake(float power) {
   setSingleMotorI2C(INTAKE, power);
 }
 
+void runtimeSetLift(float power) {
+  writeSpark(LIFT, power);
+}
+
 void runtimeDrop() {
   stopMotors();
   setSingleMotorI2C(INTAKE, 0.0f);
@@ -129,6 +133,7 @@ void configureRuntimeIo() {
   autoIO.driveMecanum = runtimeDriveMecanum;
   autoIO.stopDrive = runtimeStopDrive;
   autoIO.setIntake = runtimeSetIntake;
+  autoIO.setLift = runtimeSetLift;
   autoIO.drop = runtimeDrop;
   autoIO.startVisionPickup = runtimeStartVisionPickup;
   autoIO.updateVisionPickup = runtimeUpdateVisionPickup;
@@ -136,8 +141,12 @@ void configureRuntimeIo() {
   autoIO.onCommandStart = runtimeCommandStart;
   autoIO.onCommandFinish = runtimeCommandFinish;
   autoIO.onError = runtimeError;
+  autoIO.shouldAbort = runtimeShouldAbort;
+  autoIO.onSafetyEvent = runtimeSafetyEvent;
 }
 ```
+
+`Cmd::LiftOn` `setLift(1.0f)` çağırır ve hemen biter. `Cmd::LiftOff` `setLift(0.0f)` çağırır ve hemen biter. Lift komutları için `setLift` callback'i yoksa runtime safe error durumuna geçer. `Stop`, cancel, error ve timeout durumlarında `setLift` bağlıysa lift `0.0f` ile durdurulur.
 
 `driveMecanum(vx, vy, omega)` normalize edilmiş bir komut arayüzüdür:
 
@@ -181,6 +190,8 @@ void autonomousLoop() {
   AutoRuntimeInput input;
   input.nowMs = millis();
   input.yawDeg = currentYaw;
+  input.yawValid = gyroReady;
+  input.yawTimestampMs = lastGyroUpdateMs;
   input.visionPickupFinished = (visionState == VISION_DROP);
 
   autoRunner.update(input, autoIO);
@@ -188,6 +199,8 @@ void autonomousLoop() {
 ```
 
 `autonomousLoop()` içinde delay kullanılmamalıdır. Runtime komut sürelerini ve timeout'ları `input.nowMs` üzerinden takip eder.
+
+`yawValid` ve `yawTimestampMs` alanları opsiyonel guard alanlarıdır. `AutoRuntimeConfig.yawStaleTimeoutMs` sıfırdan büyükse runtime eski gyro verisini hata kabul eder, drive'ı durdurur ve `onError` çağırır. `shouldAbort()` callback'i de acil stop, disable, gyro-not-ready veya benzeri firmware güvenlik koşulları için kullanılabilir.
 
 ## VisionPickup Update Callback Nasıl Çalışır?
 
@@ -246,7 +259,7 @@ arduino-cli compile --fqbn esp32:esp32:esp32 --libraries . examples/BasicAutoRun
 arduino-cli compile --fqbn esp32:esp32:esp32 --libraries . examples/VisionPickupIntegration
 ```
 
-`BasicAutoRunner` basit timed drive, turn, wait ve intake/drop komutlarını gösterir.
+`BasicAutoRunner` basit timed drive, turn, wait, intake ve lift komutlarını gösterir.
 
 `VisionPickupIntegration` mevcut robot firmware'deki vision state machine'in runtime'a nasıl bağlanacağını gösterir:
 

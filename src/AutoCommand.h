@@ -10,6 +10,8 @@ enum class Cmd : uint8_t {
     VisionPickup,
     IntakeOn,
     IntakeOff,
+    LiftOn,
+    LiftOff,
     Drop,
     Wait,
     Stop

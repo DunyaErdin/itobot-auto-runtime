@@ -12,6 +12,9 @@ enum VisionState {
 static const AutoCommand VISION_AUTO[] = {
     { Cmd::DriveHoldYaw, 0.25f, 0.0f, 800 },
     { Cmd::VisionPickup, 0.0f, 0.0f, 0 },
+    { Cmd::LiftOn, 0.0f, 0.0f, 0 },
+    { Cmd::Wait, 0.0f, 0.0f, 300 },
+    { Cmd::LiftOff, 0.0f, 0.0f, 0 },
     { Cmd::Drop, 0.0f, 0.0f, 0 },
     { Cmd::Stop, 0.0f, 0.0f, 0 }
 };
@@ -36,6 +39,11 @@ void stopMotors() {
 void setIntakePower(float power) {
     (void)power;
     // Existing intake control.
+}
+
+void setLiftPower(float power) {
+    (void)power;
+    // Existing lift motor control.
 }
 
 void dropGamePiece() {
@@ -89,6 +97,10 @@ void runtimeSetIntake(float power) {
     setIntakePower(power);
 }
 
+void runtimeSetLift(float power) {
+    setLiftPower(power);
+}
+
 void runtimeDrop() {
     dropGamePiece();
 }
@@ -103,6 +115,7 @@ void configureRuntimeIo() {
     autoIO.driveMecanum = runtimeDriveMecanum;
     autoIO.stopDrive = runtimeStopDrive;
     autoIO.setIntake = runtimeSetIntake;
+    autoIO.setLift = runtimeSetLift;
     autoIO.drop = runtimeDrop;
     autoIO.startVisionPickup = runtimeStartVisionPickup;
     autoIO.updateVisionPickup = runtimeUpdateVisionPickup;

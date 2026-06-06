@@ -66,12 +66,15 @@ private:
     void finishRoutine(const AutoRuntimeIO& io);
     void skipActiveCommandAfterTimeout(const AutoRuntimeIO& io, const AutoCommand& command);
     void enterError(const AutoRuntimeIO& io, const char* message);
-    void reportError(const AutoRuntimeIO& io, const char* message) const;
+    void reportError(const AutoRuntimeIO& io, const char* message);
     void stopDrive(const AutoRuntimeIO& io) const;
+    void stopLift(const AutoRuntimeIO& io) const;
     void cancelVisionIfActive(const AutoRuntimeIO& io);
     void stopDriveForCommandFinish(const AutoRuntimeIO& io, Cmd command) const;
     bool requireStopDrive(const AutoRuntimeIO& io);
     bool requireDriveMecanum(const AutoRuntimeIO& io);
+    bool validateSafetyInput(const AutoRuntimeInput& input, const AutoRuntimeIO& io, const AutoCommand& command);
+    bool validateCommandValues(const AutoRuntimeIO& io, const AutoCommand& command);
     bool isTimedOut(const AutoRuntimeInput& input) const;
     uint32_t elapsedMs(const AutoRuntimeInput& input) const;
     void updateTelemetry(const AutoRuntimeInput& input, float yawErrorDeg);

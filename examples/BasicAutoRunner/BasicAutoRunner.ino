@@ -7,6 +7,9 @@ static const AutoCommand BASIC_AUTO[] = {
     { Cmd::IntakeOn, 0.0f, 0.0f, 0 },
     { Cmd::Wait, 0.0f, 0.0f, 500 },
     { Cmd::IntakeOff, 0.0f, 0.0f, 0 },
+    { Cmd::LiftOn, 0.0f, 0.0f, 0 },
+    { Cmd::Wait, 0.0f, 0.0f, 300 },
+    { Cmd::LiftOff, 0.0f, 0.0f, 0 },
     { Cmd::Stop, 0.0f, 0.0f, 0 }
 };
 static const size_t BASIC_AUTO_COUNT = sizeof(BASIC_AUTO) / sizeof(BASIC_AUTO[0]);
@@ -32,6 +35,11 @@ void runtimeStopDrive() {
 
 void runtimeSetIntake(float power) {
     Serial.print("intake=");
+    Serial.println(power, 2);
+}
+
+void runtimeSetLift(float power) {
+    Serial.print("lift=");
     Serial.println(power, 2);
 }
 
@@ -75,6 +83,7 @@ void configureRuntimeIo() {
     autoIO.driveMecanum = runtimeDriveMecanum;
     autoIO.stopDrive = runtimeStopDrive;
     autoIO.setIntake = runtimeSetIntake;
+    autoIO.setLift = runtimeSetLift;
     autoIO.drop = runtimeDrop;
     autoIO.startVisionPickup = runtimeStartVisionPickup;
     autoIO.updateVisionPickup = runtimeUpdateVisionPickup;

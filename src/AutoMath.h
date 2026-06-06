@@ -8,6 +8,10 @@ inline float clampFloat(float value, float minValue, float maxValue) {
     return value;
 }
 
+inline bool isFiniteFloat(float value) {
+    return isfinite(value) != 0;
+}
+
 inline float normalizeAngleDeg(float angle) {
     float out = fmodf(angle, 360.0f);
     if (out >= 180.0f) out -= 360.0f;

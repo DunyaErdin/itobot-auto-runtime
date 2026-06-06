@@ -62,6 +62,28 @@ void runtimeDriveMecanum(float vx, float vy, float omega) {
 }
 ```
 
+## Mechanism Adapters
+
+`IntakeOn` / `IntakeOff` use `setIntake`. `LiftOn` / `LiftOff` use `setLift`.
+
+```cpp
+void runtimeSetIntake(float power) {
+  setSingleMotorI2C(INTAKE, power);
+}
+
+void runtimeSetLift(float power) {
+  writeSpark(LIFT, power);
+}
+
+void runtimeDrop() {
+  stopMotors();
+  setSingleMotorI2C(INTAKE, 0.0f);
+  // Trigger your real drop actuator here if one exists.
+}
+```
+
+`LiftOn` calls `setLift(1.0f)` and finishes immediately. `LiftOff` calls `setLift(0.0f)` and finishes immediately. On finish, error, cancel, and timeout, the runtime also calls `setLift(0.0f)` when the callback is configured.
+
 ## Vision Pickup Adapter
 
 ```cpp
@@ -99,6 +121,7 @@ void configureRuntimeIo() {
   autoIO.driveMecanum = runtimeDriveMecanum;
   autoIO.stopDrive = runtimeStopDrive;
   autoIO.setIntake = runtimeSetIntake;
+  autoIO.setLift = runtimeSetLift;
   autoIO.drop = runtimeDrop;
   autoIO.startVisionPickup = runtimeStartVisionPickup;
   autoIO.updateVisionPickup = runtimeUpdateVisionPickup;

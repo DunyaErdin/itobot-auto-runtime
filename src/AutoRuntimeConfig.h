@@ -10,6 +10,7 @@ struct AutoRuntimeConfig {
     float headingHoldKp;
     float maxHeadingCorrection;
     uint32_t commandTimeoutMs;
+    uint32_t yawStaleTimeoutMs;
     bool stopOnTimeout;
     bool visionOwnsDrive;
 
@@ -21,6 +22,7 @@ struct AutoRuntimeConfig {
           headingHoldKp(0.018f),
           maxHeadingCorrection(0.25f),
           commandTimeoutMs(5000),
+          yawStaleTimeoutMs(0),
           stopOnTimeout(true),
           visionOwnsDrive(false) {}
 };

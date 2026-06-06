@@ -5,8 +5,13 @@ static const char* kNullCommandsError = "AutoRunner.begin received null commands
 static const char* kStopDriveRequiredError = "AutoRuntimeIO.stopDrive is required";
 static const char* kDriveMecanumRequiredError = "AutoRuntimeIO.driveMecanum is required for drive/turn commands";
 static const char* kSetIntakeRequiredError = "AutoRuntimeIO.setIntake is required for intake commands";
+static const char* kSetLiftRequiredError = "AutoRuntimeIO.setLift is required for lift commands";
 static const char* kDropRequiredError = "AutoRuntimeIO.drop is required for Drop command";
 static const char* kCommandTimeoutError = "Auto command timed out";
+static const char* kAbortRequestedError = "Auto safety abort requested";
+static const char* kInvalidYawError = "AutoRuntimeInput yaw is invalid";
+static const char* kStaleYawError = "AutoRuntimeInput yaw is stale";
+static const char* kInvalidCommandValueError = "AutoCommand contains NaN or Inf";
 
 AutoRunner::AutoRunner()
     : commands_(0),
@@ -36,6 +41,7 @@ void AutoRunner::begin(const AutoCommand* commands, size_t count, const AutoRunt
     if (commands == 0 && count > 0) {
         state_ = AutoRunnerState::Error;
         telemetry_.error = true;
+        telemetry_.lastError = kNullCommandsError;
         return;
     }
 
@@ -48,6 +54,7 @@ void AutoRunner::begin(const AutoCommand* commands, size_t count, const AutoRunt
     state_ = AutoRunnerState::Running;
     telemetry_.running = true;
     telemetry_.activeIndex = 0;
+    telemetry_.commandCount = commandCount_;
     telemetry_.activeCommand = commands_[0].type;
 }
 
@@ -75,6 +82,13 @@ void AutoRunner::update(const AutoRuntimeInput& input, const AutoRuntimeIO& io) 
 
     size_t guard = 0;
     while (state_ == AutoRunnerState::Running && guard < commandCount_) {
+        if (io.shouldAbort != 0 && io.shouldAbort()) {
+            if (io.onSafetyEvent != 0) {
+                io.onSafetyEvent(kAbortRequestedError);
+            }
+            enterError(io, kAbortRequestedError);
+            return;
+        }
         if (commands_ == 0) {
             enterError(io, kNullCommandsError);
             return;
@@ -85,6 +99,8 @@ void AutoRunner::update(const AutoRuntimeInput& input, const AutoRuntimeIO& io) 
         }
 
         const AutoCommand& command = commands_[activeIndex_];
+        if (!validateCommandValues(io, command)) return;
+        if (!validateSafetyInput(input, io, command)) return;
         if (!commandStarted_) {
             startCommand(input, io, command);
         }
@@ -114,10 +130,12 @@ void AutoRunner::cancel(const AutoRuntimeIO& io) {
     if (state_ == AutoRunnerState::Running) {
         cancelVisionIfActive(io);
         stopDrive(io);
+        stopLift(io);
         state_ = AutoRunnerState::Cancelled;
         telemetry_.running = false;
         telemetry_.finished = false;
         telemetry_.error = false;
+        telemetry_.cancelled = true;
     }
 }
 
@@ -170,6 +188,7 @@ void AutoRunner::startCommand(const AutoRuntimeInput& input, const AutoRuntimeIO
     commandStartMs_ = input.nowMs;
     activeVision_ = false;
     telemetry_.activeIndex = activeIndex_;
+    telemetry_.commandCount = commandCount_;
     telemetry_.activeCommand = command.type;
     telemetry_.commandElapsedMs = 0;
     if (io.onCommandStart != 0) {
@@ -201,6 +220,22 @@ AutoRunner::CommandResult AutoRunner::executeCommand(const AutoRuntimeInput& inp
                 return CommandFailed;
             }
             io.setIntake(0.0f);
+            updateTelemetry(input, 0.0f);
+            return CommandFinished;
+        case Cmd::LiftOn:
+            if (io.setLift == 0) {
+                enterError(io, kSetLiftRequiredError);
+                return CommandFailed;
+            }
+            io.setLift(1.0f);
+            updateTelemetry(input, 0.0f);
+            return CommandFinished;
+        case Cmd::LiftOff:
+            if (io.setLift == 0) {
+                enterError(io, kSetLiftRequiredError);
+                return CommandFailed;
+            }
+            io.setLift(0.0f);
             updateTelemetry(input, 0.0f);
             return CommandFinished;
         case Cmd::Drop:
@@ -344,17 +379,21 @@ void AutoRunner::finishActiveCommand(const AutoRuntimeIO& io, const AutoCommand&
 
 void AutoRunner::finishRoutine(const AutoRuntimeIO& io) {
     stopDrive(io);
+    stopLift(io);
     state_ = AutoRunnerState::Finished;
     commandStarted_ = false;
     activeVision_ = false;
     telemetry_.running = false;
     telemetry_.finished = true;
     telemetry_.error = false;
+    telemetry_.cancelled = false;
+    telemetry_.routineProgress = 1.0f;
 }
 
 void AutoRunner::skipActiveCommandAfterTimeout(const AutoRuntimeIO& io, const AutoCommand& command) {
     cancelVisionIfActive(io);
     stopDriveForCommandFinish(io, command.type);
+    stopLift(io);
     if (io.onCommandFinish != 0) {
         io.onCommandFinish(activeIndex_, command.type);
     }
@@ -372,15 +411,19 @@ void AutoRunner::skipActiveCommandAfterTimeout(const AutoRuntimeIO& io, const Au
 void AutoRunner::enterError(const AutoRuntimeIO& io, const char* message) {
     cancelVisionIfActive(io);
     stopDrive(io);
+    stopLift(io);
     state_ = AutoRunnerState::Error;
     commandStarted_ = false;
     telemetry_.running = false;
     telemetry_.finished = false;
     telemetry_.error = true;
+    telemetry_.cancelled = false;
+    telemetry_.lastError = message;
     reportError(io, message);
 }
 
-void AutoRunner::reportError(const AutoRuntimeIO& io, const char* message) const {
+void AutoRunner::reportError(const AutoRuntimeIO& io, const char* message) {
+    telemetry_.lastError = message;
     if (io.onError != 0) {
         io.onError(message);
     }
@@ -389,6 +432,12 @@ void AutoRunner::reportError(const AutoRuntimeIO& io, const char* message) const
 void AutoRunner::stopDrive(const AutoRuntimeIO& io) const {
     if (io.stopDrive != 0) {
         io.stopDrive();
+    }
+}
+
+void AutoRunner::stopLift(const AutoRuntimeIO& io) const {
+    if (io.setLift != 0) {
+        io.setLift(0.0f);
     }
 }
 
@@ -422,6 +471,35 @@ bool AutoRunner::requireDriveMecanum(const AutoRuntimeIO& io) {
     return false;
 }
 
+bool AutoRunner::validateCommandValues(const AutoRuntimeIO& io, const AutoCommand& command) {
+    if (!isFiniteFloat(command.a) || !isFiniteFloat(command.b)) {
+        enterError(io, kInvalidCommandValueError);
+        return false;
+    }
+    return true;
+}
+
+bool AutoRunner::validateSafetyInput(const AutoRuntimeInput& input, const AutoRuntimeIO& io, const AutoCommand& command) {
+    const bool needsYaw = command.type == Cmd::DriveHoldYaw
+        || command.type == Cmd::StrafeHoldYaw
+        || command.type == Cmd::TurnToYaw;
+    if (!needsYaw) return true;
+
+    if (!input.yawValid || !isFiniteFloat(input.yawDeg)) {
+        enterError(io, kInvalidYawError);
+        return false;
+    }
+
+    if (config_.yawStaleTimeoutMs > 0
+        && input.yawTimestampMs > 0
+        && static_cast<uint32_t>(input.nowMs - input.yawTimestampMs) > config_.yawStaleTimeoutMs) {
+        enterError(io, kStaleYawError);
+        return false;
+    }
+
+    return true;
+}
+
 bool AutoRunner::isTimedOut(const AutoRuntimeInput& input) const {
     if (config_.commandTimeoutMs == 0) return false;
     return elapsedMs(input) >= config_.commandTimeoutMs;
@@ -435,9 +513,15 @@ void AutoRunner::updateTelemetry(const AutoRuntimeInput& input, float yawErrorDe
     telemetry_.running = state_ == AutoRunnerState::Running;
     telemetry_.finished = state_ == AutoRunnerState::Finished;
     telemetry_.error = state_ == AutoRunnerState::Error;
+    telemetry_.cancelled = state_ == AutoRunnerState::Cancelled;
     telemetry_.activeIndex = activeIndex_;
+    telemetry_.commandCount = commandCount_;
     telemetry_.activeCommand = activeCommandType();
     telemetry_.commandElapsedMs = commandStarted_ ? elapsedMs(input) : 0;
     telemetry_.yawDeg = input.yawDeg;
     telemetry_.yawErrorDeg = yawErrorDeg;
+    telemetry_.visionActive = activeVision_;
+    telemetry_.routineProgress = commandCount_ > 0
+        ? static_cast<float>(activeIndex_) / static_cast<float>(commandCount_)
+        : (state_ == AutoRunnerState::Finished ? 1.0f : 0.0f);
 }

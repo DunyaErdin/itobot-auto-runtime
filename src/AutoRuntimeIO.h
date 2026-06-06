@@ -8,17 +8,22 @@ struct AutoRuntimeInput {
     uint32_t nowMs;
     float yawDeg;
     bool visionPickupFinished;
+    bool yawValid;
+    uint32_t yawTimestampMs;
 
     AutoRuntimeInput()
         : nowMs(0),
           yawDeg(0.0f),
-          visionPickupFinished(false) {}
+          visionPickupFinished(false),
+          yawValid(true),
+          yawTimestampMs(0) {}
 };
 
 struct AutoRuntimeIO {
     void (*driveMecanum)(float vx, float vy, float omega);
     void (*stopDrive)();
     void (*setIntake)(float power);
+    void (*setLift)(float power);
     void (*drop)();
     void (*startVisionPickup)();
     void (*updateVisionPickup)();
@@ -26,18 +31,23 @@ struct AutoRuntimeIO {
     void (*onCommandStart)(size_t index, Cmd command);
     void (*onCommandFinish)(size_t index, Cmd command);
     void (*onError)(const char* message);
+    bool (*shouldAbort)();
+    void (*onSafetyEvent)(const char* message);
 
     AutoRuntimeIO()
         : driveMecanum(0),
           stopDrive(0),
           setIntake(0),
+          setLift(0),
           drop(0),
           startVisionPickup(0),
           updateVisionPickup(0),
           cancelVisionPickup(0),
           onCommandStart(0),
           onCommandFinish(0),
-          onError(0) {}
+          onError(0),
+          shouldAbort(0),
+          onSafetyEvent(0) {}
 };
 
 inline void clearAutoRuntimeIO(AutoRuntimeIO& io) {

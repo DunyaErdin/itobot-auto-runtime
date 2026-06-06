@@ -6,6 +6,7 @@ struct FakeIoState {
     int driveCalls;
     int stopCalls;
     int intakeCalls;
+    int liftCalls;
     int dropCalls;
     int visionStartCalls;
     int visionUpdateCalls;
@@ -13,10 +14,13 @@ struct FakeIoState {
     int commandStartCalls;
     int commandFinishCalls;
     int errorCalls;
+    int safetyEventCalls;
+    bool abortRequested;
     float lastVx;
     float lastVy;
     float lastOmega;
     float lastIntake;
+    float lastLift;
     const char* lastError;
 };
 
@@ -27,6 +31,7 @@ static void resetIo() {
     gIo.driveCalls = 0;
     gIo.stopCalls = 0;
     gIo.intakeCalls = 0;
+    gIo.liftCalls = 0;
     gIo.dropCalls = 0;
     gIo.visionStartCalls = 0;
     gIo.visionUpdateCalls = 0;
@@ -34,10 +39,13 @@ static void resetIo() {
     gIo.commandStartCalls = 0;
     gIo.commandFinishCalls = 0;
     gIo.errorCalls = 0;
+    gIo.safetyEventCalls = 0;
+    gIo.abortRequested = false;
     gIo.lastVx = 0.0f;
     gIo.lastVy = 0.0f;
     gIo.lastOmega = 0.0f;
     gIo.lastIntake = 0.0f;
+    gIo.lastLift = 0.0f;
     gIo.lastError = 0;
 }
 
@@ -71,6 +79,11 @@ static void fakeIntake(float power) {
     gIo.lastIntake = power;
 }
 
+static void fakeLift(float power) {
+    ++gIo.liftCalls;
+    gIo.lastLift = power;
+}
+
 static void fakeDrop() {
     ++gIo.dropCalls;
 }
@@ -100,11 +113,20 @@ static void fakeError(const char* message) {
     gIo.lastError = message;
 }
 
-static AutoRuntimeIO makeIo(bool includeDrive = true, bool includeVisionUpdate = true) {
+static bool fakeShouldAbort() {
+    return gIo.abortRequested;
+}
+
+static void fakeSafetyEvent(const char*) {
+    ++gIo.safetyEventCalls;
+}
+
+static AutoRuntimeIO makeIo(bool includeDrive = true, bool includeVisionUpdate = true, bool includeLift = true) {
     AutoRuntimeIO io;
     io.driveMecanum = includeDrive ? fakeDrive : 0;
     io.stopDrive = fakeStop;
     io.setIntake = fakeIntake;
+    io.setLift = includeLift ? fakeLift : 0;
     io.drop = fakeDrop;
     io.startVisionPickup = fakeVisionStart;
     io.updateVisionPickup = includeVisionUpdate ? fakeVisionUpdate : 0;
@@ -112,6 +134,8 @@ static AutoRuntimeIO makeIo(bool includeDrive = true, bool includeVisionUpdate =
     io.onCommandStart = fakeCommandStart;
     io.onCommandFinish = fakeCommandFinish;
     io.onError = fakeError;
+    io.shouldAbort = fakeShouldAbort;
+    io.onSafetyEvent = fakeSafetyEvent;
     return io;
 }
 
@@ -206,6 +230,39 @@ static void testStopFinishesRoutine() {
     expectTrue(gIo.stopCalls > 0, "Stop should stop drive");
 }
 
+static void testLiftCommands() {
+    resetIo();
+    const AutoCommand commands[] = {
+        { Cmd::LiftOn, 0.0f, 0.0f, 0 },
+        { Cmd::Wait, 0.0f, 0.0f, 250 },
+        { Cmd::LiftOff, 0.0f, 0.0f, 0 },
+        { Cmd::Stop, 0.0f, 0.0f, 0 }
+    };
+    AutoRunner runner;
+    runner.begin(commands, 4);
+    const AutoRuntimeIO io = makeIo();
+    runner.update(inputAt(0, 0.0f), io);
+    expectTrue(gIo.liftCalls >= 1, "LiftOn should call setLift");
+    expectNear(gIo.lastLift, 1.0f, 0.001f, "LiftOn should set lift to 1");
+    runner.update(inputAt(250, 0.0f), io);
+    expectTrue(runner.isFinished(), "Lift routine should finish");
+    expectNear(gIo.lastLift, 0.0f, 0.001f, "LiftOff/final Stop should set lift to 0");
+}
+
+static void testMissingLiftCallbackErrorsSafely() {
+    resetIo();
+    const AutoCommand commands[] = {
+        { Cmd::LiftOn, 0.0f, 0.0f, 0 }
+    };
+    AutoRunner runner;
+    runner.begin(commands, 1);
+    const AutoRuntimeIO io = makeIo(true, true, false);
+    runner.update(inputAt(0, 0.0f), io);
+    expectTrue(runner.hasError(), "missing setLift callback should error safely");
+    expectTrue(gIo.errorCalls == 1, "missing setLift callback should report error");
+    expectTrue(gIo.stopCalls > 0, "missing setLift callback should stop drive");
+}
+
 static void testNullAndZeroSafety() {
     AutoRunner runner;
     runner.begin(0, 1);
@@ -243,6 +300,69 @@ static void testTimeoutSafety() {
     runner.update(inputAt(50, 0.0f), io);
     expectTrue(runner.hasError(), "turn should timeout safely");
     expectTrue(gIo.stopCalls > 0, "timeout should stop drive");
+    expectNear(gIo.lastLift, 0.0f, 0.001f, "timeout should stop lift when callback exists");
+}
+
+static void testInvalidYawErrorsSafely() {
+    resetIo();
+    const AutoCommand commands[] = {
+        { Cmd::DriveHoldYaw, 0.2f, 0.0f, 100 }
+    };
+    AutoRunner runner;
+    runner.begin(commands, 1);
+    const AutoRuntimeIO io = makeIo();
+    AutoRuntimeInput input = inputAt(0, 0.0f);
+    input.yawValid = false;
+    runner.update(input, io);
+    expectTrue(runner.hasError(), "invalid yaw should error safely");
+    expectTrue(gIo.stopCalls > 0, "invalid yaw should stop drive");
+    expectTrue(gIo.driveCalls == 0, "invalid yaw should not drive");
+}
+
+static void testStaleYawErrorsSafely() {
+    resetIo();
+    AutoRuntimeConfig config;
+    config.yawStaleTimeoutMs = 25;
+    const AutoCommand commands[] = {
+        { Cmd::TurnToYaw, 30.0f, 0.0f, 0 }
+    };
+    AutoRunner runner;
+    runner.begin(commands, 1, config);
+    const AutoRuntimeIO io = makeIo();
+    AutoRuntimeInput input = inputAt(100, 0.0f);
+    input.yawTimestampMs = 50;
+    runner.update(input, io);
+    expectTrue(runner.hasError(), "stale yaw should error safely");
+    expectTrue(gIo.stopCalls > 0, "stale yaw should stop drive");
+}
+
+static void testNanCommandErrorsSafely() {
+    resetIo();
+    const AutoCommand commands[] = {
+        { Cmd::DriveHoldYaw, NAN, 0.0f, 100 }
+    };
+    AutoRunner runner;
+    runner.begin(commands, 1);
+    const AutoRuntimeIO io = makeIo();
+    runner.update(inputAt(0, 0.0f), io);
+    expectTrue(runner.hasError(), "NaN command should error safely");
+    expectTrue(gIo.stopCalls > 0, "NaN command should stop drive");
+    expectTrue(gIo.driveCalls == 0, "NaN command should not drive");
+}
+
+static void testAbortCallbackStopsDrive() {
+    resetIo();
+    const AutoCommand commands[] = {
+        { Cmd::DriveHoldYaw, 0.2f, 0.0f, 100 }
+    };
+    AutoRunner runner;
+    runner.begin(commands, 1);
+    const AutoRuntimeIO io = makeIo();
+    gIo.abortRequested = true;
+    runner.update(inputAt(0, 0.0f), io);
+    expectTrue(runner.hasError(), "abort callback should enter error state");
+    expectTrue(gIo.safetyEventCalls == 1, "abort callback should report safety event");
+    expectTrue(gIo.stopCalls > 0, "abort callback should stop drive");
 }
 
 static void testVisionWaitsForCompletion() {
@@ -331,6 +451,7 @@ static void testCancelStopsDriveAndVision() {
     expectTrue(runner.isCancelled(), "cancel should enter Cancelled state");
     expectTrue(gIo.stopCalls > 0, "cancel should stop drive");
     expectTrue(gIo.visionCancelCalls == 1, "cancel should cancel active vision");
+    expectNear(gIo.lastLift, 0.0f, 0.001f, "cancel should stop lift when callback exists");
 }
 
 int main() {
@@ -340,9 +461,15 @@ int main() {
     testDriveFinishesAfterDurationAndClampsPower();
     testWaitFinishesAfterDuration();
     testStopFinishesRoutine();
+    testLiftCommands();
+    testMissingLiftCallbackErrorsSafely();
     testNullAndZeroSafety();
     testMissingRequiredCallback();
     testTimeoutSafety();
+    testInvalidYawErrorsSafely();
+    testStaleYawErrorsSafely();
+    testNanCommandErrorsSafely();
+    testAbortCallbackStopsDrive();
     testVisionWaitsForCompletion();
     testVisionNullUpdateDoesNotCrash();
     testVisionStartIsOptional();
